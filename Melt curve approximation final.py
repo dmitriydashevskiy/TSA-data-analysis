@@ -388,7 +388,7 @@ the help of the function 'visualization', and only when the best approximation t
 is achieved, proceed to converting and saving the data with the help of the function 'data_save'.  
 
 """
-directory_name = '/Users/dmitrij/Desktop/Лаба/CPM project/Статья/Example for processing'
+directory_name = 'Example for processing'
 data_name = data_search(directory_name)
 experiment = data_read(data_name, directory_name)
 experiment = curve_approximation(experiment, meltcurve_computation, data_name)
