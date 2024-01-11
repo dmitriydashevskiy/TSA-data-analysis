@@ -358,10 +358,7 @@ def data_save(experiment_dict, data_name, directory_name):
 
     for k in range(len(data_name)):
         name = data_name[k]
-        concentration_names = experiment_dict[name]["concentration_names"]
         concentrations = experiment_dict[name]["concentrations"]
-        x_data = experiment_dict[name]["x_data"]
-        y_data = experiment_dict[name]["y_data"]
         parameters = experiment_dict[name]["parameters"]
         T_isotherm = experiment_dict[name]["T_isotherm"]
         n_u = experiment_dict[name]["n_u"]
