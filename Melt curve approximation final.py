@@ -109,17 +109,17 @@ def data_read(data_name, directory_name):
         for i in concentration_names:
             c = i.split()
             if c[1] == "uM":
-                l = float(c[0]) * 10 ** (-6)
+                conc = float(c[0]) * 10 ** (-6)
             elif c[1] == "nM":
-                l = float(c[0]) * 10 ** (-9)
+                conc = float(c[0]) * 10 ** (-9)
             elif c[1] == "mM":
-                l = float(c[0]) * 10 ** (-3)
+                conc = float(c[0]) * 10 ** (-3)
             elif c[1] == "M":
-                l = float(c[0])
+                conc = float(c[0])
             else:
                 print("error: name ", i, " is invalid")
 
-            concentrations.append(l)
+            concentrations.append(conc)
             x = np.array(data[data.columns[0]])
             y = np.array(data[i])
             x_data.append(x)
