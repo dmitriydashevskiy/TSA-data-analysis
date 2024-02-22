@@ -145,7 +145,6 @@ def curve_approximation(
     params_start=None,
     params_min=None,
     params_max=None,
-    T_isotherm=[40, 42, 44, 46, 48, 50, 52, 54, 56, 58, 60]
 ):
     """
     The function 'curve_approximation' is made to find parameters that best
@@ -160,18 +159,14 @@ def curve_approximation(
     parameter search manually, you can do it by giving the function the
     lists 'params_start', 'params_min' and 'params_max'.
 
-    You can also give the function the values of temperatures for which
-    you want to calculate the dissociation constant using the isothermal
-    method, as a list in the variable 'T_isotherm'.
-
     The result of the function work is a modification of dictionary
     'experiment_dict'. The next values are added to each 'curve_dict':
     * dictionary with the values of chosen parameters and also with the
       value change of Gibbs free energy change 'G' and change of entropy
       'S' – 'parameters',
-    * temperatures chosen for isothermal analysis: 'T_isotherm',
-    * matrix containing fration of unfolded protein for temperatures
-      from 'T_isotherm'.
+    * list of R square values calculated for approximation of each curve 'R^2',
+    * matrix containing fraction of unfolded protein for all temperatures
+      in the experiment 'n_u'
     """
 
     H_0 = 10000
@@ -192,6 +187,7 @@ def curve_approximation(
         x_data = experiment_dict[name]["x_data"]
         y_data = experiment_dict[name]["y_data"]
         n_u = np.zeros((len(T_isotherm), len(concentrations)))
+        print('File in process: ',name)
 
         parameters_names = ["H", "Tm", "Fn", "Fu", "a", "b", "G", "S"]
         parameters = dict()
@@ -199,8 +195,9 @@ def curve_approximation(
             parameters[m] = []
 
         for i in range(len(x_data)):
-            Fn_0 = min(y_data[i])
-            Fu_0 = max(y_data[i])
+            F = y_data[i]
+            Fn_0 = min(F)
+            Fu_0 = max(F)
 
             H_min, H_max = [1000, 800000]
             Tm_min, Tm_max = [30, 75]
@@ -229,20 +226,20 @@ def curve_approximation(
             G = H - 298 * S
 
             param_list = [H, Tm, Fn, Fu, a, b, G, S]
+            prediction = approximation_function(x_data[i],H, Tm, Fn, Fu, a, b)
+            corr_matrix = np.corrcoef(y_data[i], prediction)
+            R_square_list.append(corr_matrix[0,1]**2)
 
             for n in range(len(param_list)):
                 parameters[parameters_names[n]].append(param_list[n])
 
-            for j in range(len(T_isotherm)):
-                n_u[j][i] = 1 / (
-                    1
-                    + np.exp((H / 8.31) *
-                             (1 / (T_isotherm[j] + 273) - 1 / (Tm + 273)))
-                )
+            for j in range(len(x_data[i])):
+                T = x_data[i][j]
+                n_u[j][i] = (F[j]-Fn-a*(T-25))/(Fu-Fn+(b-a)*(T-25))
 
         experiment_dict[name]["parameters"] = parameters
-        experiment_dict[name]["T_isotherm"] = T_isotherm
         experiment_dict[name]["n_u"] = n_u
+        experiment_dict[name]['R^2'] = R_square_list
 
     return experiment_dict
 
@@ -260,7 +257,7 @@ def visualization(experiment_dict, data_name):
     The result of the function work is a displaying a series of tables
     and graphs for each file:
     * the name of the processed file,
-    * table of chosen parameters,
+    * table of chosen parameters and R square value for each curve,
     * graph showing the experimental points of melting curve and their
       approximation,
     * graph showing Gibbs free energy change dependence on ligand
@@ -268,8 +265,7 @@ def visualization(experiment_dict, data_name):
     * graph showing melting point 'Tm' dependence on ligand
       concentration,
     * graph showing the fraction of unfolded protein dependence on
-      ligand concentration
-    * for temperatures from 'T_isotherm' – 'Isotherm'.
+      ligand concentration for all temperatures from experiment - 'Isotherm'.
     """
 
     for k in range(len(data_name)):
@@ -279,18 +275,22 @@ def visualization(experiment_dict, data_name):
         x_data = experiment_dict[name]["x_data"]
         y_data = experiment_dict[name]["y_data"]
         parameters = experiment_dict[name]["parameters"]
-        T_isotherm = experiment_dict[name]["T_isotherm"]
         n_u = experiment_dict[name]["n_u"]
-        print("The file being processed:", name)
+        R_square = experiment_dict[name]['R^2']
+        print("File in visualization:", name)
 
         parameters_frame = pd.DataFrame.from_dict(
             parameters, orient="index", columns=concentration_names
         )
+        parameters_frame.loc[len(parameters_frame.index )] = R_square
+        parameters_frame.rename(index={parameters_frame.index[-1]: 'R^2'}, inplace=True)    
         display(parameters_frame)
+
+        colors_1 = [plt.cm.nipy_spectral(i/float(len(x_data)-1)) for i in range(len(x_data))]
 
         plt.figure(figsize=(15, 10))
         for i in range(len(x_data)):
-            plt.scatter(x_data[i], y_data[i], color="C" + str(i))
+            plt.scatter(x_data[i], y_data[i], color=colors_1[i])
             f = meltcurve_computation(
                 x_data[i],
                 *np.array(parameters_frame[concentration_names[i]][:6])
@@ -324,14 +324,16 @@ def visualization(experiment_dict, data_name):
         plt.title("Tm dependence")
         plt.show()
 
-        plt.figure(figsize=(15, 10))
+        colors_2 = [plt.cm.nipy_spectral(i/float(len(n_u)-1)) for i in range(len(n_u))]
+
+        plt.figure(figsize =(15,10))
         for i in range(len(n_u)):
-            plt.plot(concentrations, n_u[i], label=" %2.0f C°" % T_isotherm[i])
-        plt.ylabel("Fraction of unfolded protein")
-        plt.xlabel("Ligand concentration, nM")
-        pyplot.xscale("log")
-        plt.legend(loc=2, prop={"size": 10})
-        plt.title("Isotherm")
+            plt.plot(concentrations, n_u[i],label = ' %2.0f C°'% x_data[0][i], color = colors_2[i])
+        plt.ylabel('Fraction of unfolded protein')
+        plt.xlabel( 'Ligand concentration, nM')
+        pyplot.xscale('log')
+        plt.legend(loc = 2, prop={'size': 10})
+        plt.title('Isotherm')
         plt.show()
 
 
@@ -353,25 +355,34 @@ def data_save(experiment_dict, data_name, directory_name):
       on ligand concentration for each file – 'result_G.csv',
     * the files containing matrix for the fraction of unfolded protein
       dependence on ligand concentration for temperatures from 'T_melt' for
-      each file from analysis – name of file + '_result_isothermal.csv'.
+      each file from analysis – name of file + '_result_isothermal.csv',
+    * the file with the table containing R square values 'R^2' dependence
+      on ligand concentration for each file – 'result_R^2.csv'. 
     """
 
     for k in range(len(data_name)):
         name = data_name[k]
-        concentrations = experiment_dict[name]["concentrations"]
-        parameters = experiment_dict[name]["parameters"]
-        T_isotherm = experiment_dict[name]["T_isotherm"]
-        n_u = experiment_dict[name]["n_u"]
-
+        concentration_names = experiment_dict[name]['concentration_names']
+        concentrations = experiment_dict[name]['concentrations']
+        x_data = experiment_dict[name]['x_data']
+        y_data = experiment_dict[name]['y_data']
+        parameters = experiment_dict[name]['parameters']
+        n_u = experiment_dict[name]['n_u']
+        R_square = experiment_dict[name]['R^2']
+        
         if k == 0:
             df = pd.DataFrame(parameters["G"], concentrations, [name])
             dfT = pd.DataFrame(parameters["Tm"], concentrations, [name])
+            dfR = pd.DataFrame(experiment_dict[name]['R^2'], concentrations,[name])
         else:
             df2 = pd.DataFrame(parameters["G"], concentrations, [name])
             df = pd.concat([df, df2], axis=1, sort=False)
 
             dfT2 = pd.DataFrame(parameters["Tm"], concentrations, [name])
             dfT = pd.concat([dfT, dfT2], axis=1, sort=False)
+
+            dfR2 = pd.DataFrame(experiment_dict[name]['R^2'], concentrations,[name])
+            dfR = pd.concat([dfR,dfR2], axis = 1, sort=False )
 
         data_nu = pd.DataFrame(n_u.T, concentrations, T_isotherm)
         data_nu.to_csv(
@@ -380,7 +391,8 @@ def data_save(experiment_dict, data_name, directory_name):
 
     df.to_csv(directory_name + "/result_G.csv")
     dfT.to_csv(directory_name + "/result_T.csv")
-
+    dfR.to_csv(directory_name+'/result_R^2.csv')
+    print("Data is saved")
 
 """
 The following sequence of commands implements the full cycle of data
