@@ -3,7 +3,6 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import seaborn as sns
-
 from matplotlib import pyplot
 from scipy.optimize import curve_fit
 from IPython.display import display
@@ -29,393 +28,301 @@ concentration are written in each cell. As an example of data organization
 for processing, you can use the folder 'Example for processing'.
 """
 
+class DataReader:
+    """Handles reading and processing of data files"""
+    
+    @staticmethod
+    def search_data(directory_name, extra_files=['.DS_Store']):
+        """Find and return list of files to be processed"""
+        data_name = []
+        for file_name in os.listdir(directory_name):
+            if file_name not in extra_files:
+                data_name.append(file_name)
+        data_name = sorted(data_name)
+        print("Files to be processed: ", data_name)
+        return data_name
 
-def data_search(directory_name, extra_files=['.DS_Store']):
-    """
-    The function 'data_search' is made to find directory and memorize the
-    names of files to be processed.
+    @staticmethod
+    def read_data(data_name, directory_name):
+        """Read and process data from files"""
+        experiment_dict = dict()
+        for k in range(len(data_name)):
+            name = data_name[k]
+            excel_data = pd.read_excel(directory_name + "/" + data_name[k])
+            data = pd.DataFrame(excel_data)
+            x_data = []
+            y_data = []
+            concentrations = []
+            concentration_names = data.columns[1:]
 
-    For the work of the function it is necessary to specify the full path to
-    the folder where the files are located using the variable 'directory_name'.
-    The folder should contain only files that contain data to be processed in
-    the form specified above. If there is a need to store in the folder other
-    files that do not contain data for processing, you can pass them to the
-    function as a list of the names of these files in a variable 'extra_files'.
+            for i in concentration_names:
+                c = i.split()
+                if c[1] == "uM":
+                    conc = float(c[0]) * 10 ** (-6)
+                elif c[1] == "nM":
+                    conc = float(c[0]) * 10 ** (-9)
+                elif c[1] == "mM":
+                    conc = float(c[0]) * 10 ** (-3)
+                elif c[1] == "M":
+                    conc = float(c[0])
+                else:
+                    print("error: name ", i, " is invalid")
 
-    The result of the function work is a list of the names of the files being
-    processed, as well as printing these names.
-    """
+                concentrations.append(conc)
+                x = np.array(data[data.columns[0]])
+                y = np.array(data[i])
+                x_data.append(x)
+                y_data.append(y)
 
-    data_name = []
-    for file_name in os.listdir(directory_name):
-        if file_name not in extra_files:
-            data_name.append(file_name)
-    data_name = sorted(data_name)
-    print("Files to be processed: ", data_name)
-    return data_name
+            x_data = np.array(x_data)
+            y_data = np.array(y_data)
+            concentrations = np.array(concentrations)
+            curve_dict = {
+                "x_data": x_data,
+                "y_data": y_data,
+                "concentrations": concentrations,
+                "concentration_names": concentration_names,
+            }
+            experiment_dict[name] = curve_dict
+        return experiment_dict
 
+class CurveApproximator:
+    """Handles curve approximation and parameter fitting"""
+    
+    @staticmethod
+    def meltcurve_computation(T, H, Tm, Fn, Fu, a, b):
+        """Compute melt curve values"""
+        T_ref = 298
+        T = T + 273
+        Tm = Tm + 273
+        G = H - T * (H / Tm)
+        R = 8.31
+        return (Fn + (T - T_ref) * a + (Fu + (T - T_ref) * b) *
+                np.exp(-G / (R * T))) /\
+               (1 + np.exp(-G / (R * T)))
 
-def meltcurve_computation(T, H, Tm, Fn, Fu, a, b):
-    """
-    The function 'data_read' is made to get and save data from the files.
+    @staticmethod
+    def approximate_curves(experiment_dict, data_name, T_isotherm, params_start=None, params_min=None, params_max=None):
+        """Approximate curves and calculate parameters"""
+        H_0 = 10000
+        Tm_0 = 45
+        a_0 = 0
+        b_0 = 0
 
-    For the work of the function it is necessary to pass the list of file names
-    in 'data_name' and pass to the directory in 'directory_name' into function.
+        flag_1 = params_start is None
+        flag_2 = params_min is None
+        flag_3 = params_max is None
 
-    The result of the function work is a dictionary 'experiment_dict'
-    in which under the name of each file is a dictionary 'curve_dict' that
-    includes:
-    * concentration values in an easy-to-read form  – 'concentration_names',
-    * numerical values of concentrations in moles – 'concentrations',
-    * list of temperatures – 'x_data',
-    * list of experimental fluorescence values – 'y_data'.
-    """
+        for k in range(len(data_name)):
+            name = data_name[k]
+            concentrations = experiment_dict[name]["concentrations"]
+            x_data = experiment_dict[name]["x_data"]
+            y_data = experiment_dict[name]["y_data"]
+            
+            # Initialize n_u with correct dimensions based on actual data
+            n_u = np.zeros((len(x_data[0]), len(concentrations)))
+            print('File in process: ', name)
 
-    T_ref = 298
-    T = T + 273
-    Tm = Tm + 273
-    G = H - T * (H / Tm)
-    R = 8.31
-    return (Fn + (T - T_ref) * a + (Fu + (T - T_ref) * b) *
-            np.exp(-G / (R * T))) /\
-           (1 + np.exp(-G / (R * T)))
+            parameters_names = ["H", "Tm", "Fn", "Fu", "a", "b", "G", "S"]
+            parameters = dict()
+            for m in parameters_names:
+                parameters[m] = []
 
+            R_square_list = []
 
-def data_read(data_name, directory_name):
-    """
-    The function 'data_read' is made to get and save data from the files.
+            for i in range(len(x_data)):
+                F = y_data[i]
+                Fn_0 = min(F)
+                Fu_0 = max(F)
 
-    For the work of the function it is necessary to pass the list of file names
-    in 'data_name' and pass to the directory in 'directory_name' into function.
+                H_min, H_max = [1000, 800000]
+                Tm_min, Tm_max = [30, 75]
+                Fn_min, Fn_max = [0.8 * Fn_0, 1.1 * Fn_0]
+                Fu_min, Fu_max = [0.9 * Fu_0, 1.5 * Fu_0]
+                a_min, a_max = [-1, 1]
+                b_min, b_max = [-0.5, 0.5]
 
-    The result of the function work is a dictionary 'experiment_dict' in which
-    under the name of each file is a dictionary 'curve_dict' that includes:
-    * concentration values in an easy-to-read form  – 'concentration_names',
-    * numerical values of concentrations in moles – 'concentrations',
-    * list of temperatures – 'x_data',
-    * list of experimental fluorescence values – 'y_data'.
-    """
+                if flag_1:
+                    params_start = [H_0, Tm_0, Fn_0, Fu_0, a_0, b_0]
+                if flag_2:
+                    params_min = [H_min, Tm_min, Fn_min, Fu_min, a_min, b_min]
+                if flag_3:
+                    params_max = [H_max, Tm_max, Fn_max, Fu_max, a_max, b_max]
 
-    experiment_dict = dict()
-    for k in range(len(data_name)):
-        name = data_name[k]
-        excel_data = pd.read_excel(directory_name + "/" + data_name[k])
-        data = pd.DataFrame(excel_data)
-        x_data = []
-        y_data = []
-        concentrations = []
-        concentration_names = data.columns[1:]
+                param, addition = curve_fit(
+                    CurveApproximator.meltcurve_computation,
+                    x_data[i],
+                    y_data[i],
+                    p0=params_start,
+                    bounds=(params_min, params_max),
+                )
 
-        for i in concentration_names:
-            c = i.split()
-            if c[1] == "uM":
-                conc = float(c[0]) * 10 ** (-6)
-            elif c[1] == "nM":
-                conc = float(c[0]) * 10 ** (-9)
-            elif c[1] == "mM":
-                conc = float(c[0]) * 10 ** (-3)
-            elif c[1] == "M":
-                conc = float(c[0])
+                H, Tm, Fn, Fu, a, b = list(map(float, param))
+                S = H / (Tm + 273)
+                G = H - 298 * S
+
+                param_list = [H, Tm, Fn, Fu, a, b, G, S]
+                prediction = CurveApproximator.meltcurve_computation(x_data[i], H, Tm, Fn, Fu, a, b)
+                corr_matrix = np.corrcoef(y_data[i], prediction)
+                R_square_list.append(corr_matrix[0,1]**2)
+
+                for n in range(len(param_list)):
+                    parameters[parameters_names[n]].append(param_list[n])
+
+                for j in range(len(x_data[i])):
+                    T = x_data[i][j]
+                    n_u[j][i] = (F[j]-Fn-a*(T-25))/(Fu-Fn+(b-a)*(T-25))
+
+            experiment_dict[name]["parameters"] = parameters
+            experiment_dict[name]["n_u"] = n_u
+            experiment_dict[name]['R^2'] = R_square_list
+
+        return experiment_dict
+
+class Visualizer:
+    """Handles visualization of results"""
+    
+    @staticmethod
+    def visualize_results(experiment_dict, data_name):
+        """Visualize analysis results"""
+        for k in range(len(data_name)):
+            name = data_name[k]
+            concentration_names = experiment_dict[name]["concentration_names"]
+            concentrations = experiment_dict[name]["concentrations"]
+            x_data = experiment_dict[name]["x_data"]
+            y_data = experiment_dict[name]["y_data"]
+            parameters = experiment_dict[name]["parameters"]
+            n_u = experiment_dict[name]["n_u"]
+            R_square = experiment_dict[name]['R^2']
+            print("File in visualization:", name)
+
+            parameters_frame = pd.DataFrame.from_dict(
+                parameters, orient="index", columns=concentration_names
+            )
+            parameters_frame.loc[len(parameters_frame.index)] = R_square
+            parameters_frame.rename(index={parameters_frame.index[-1]: 'R^2'}, inplace=True)    
+            display(parameters_frame)
+
+            # Generate colors for each concentration
+            colors = [plt.cm.nipy_spectral(i/float(len(x_data)-1)) for i in range(len(x_data))]
+
+            plt.figure(figsize=(15, 10))
+            for i in range(len(x_data)):
+                # Use the same color for both scatter points and line
+                color = colors[i]
+                plt.scatter(x_data[i], y_data[i], color=color, label=concentration_names[i])
+                f = CurveApproximator.meltcurve_computation(
+                    x_data[i],
+                    *np.array(parameters_frame[concentration_names[i]][:6])
+                )
+                plt.plot(
+                    x_data[i],
+                    f,
+                    color=color,
+                    linestyle='-'
+                )
+                plt.xlabel("T,°C")
+                plt.ylabel("Flourescence CPM")
+
+            plt.legend(loc=2, prop={"size": 10})
+            plt.title("Approximation of melting curves")
+            plt.show()
+
+            plt.figure(figsize=(15, 10))
+            plt.scatter(concentrations, *np.array(parameters_frame.loc[["G"]]))
+            plt.ylabel("delta G")
+            plt.xlabel("Ligand concentration, nM")
+            pyplot.xscale("log")
+            plt.title("delta G dependence")
+            plt.show()
+
+            plt.figure(figsize=(15, 10))
+            plt.scatter(concentrations, *np.array(parameters_frame.loc[["Tm"]]))
+            plt.ylabel("Tm")
+            plt.xlabel("Ligand concentration, nM")
+            pyplot.xscale("log")
+            plt.title("Tm dependence")
+            plt.show()
+
+            # Generate colors for isotherm plot based on the number of temperature points
+            isotherm_colors = [plt.cm.nipy_spectral(i/float(len(n_u)-1)) for i in range(len(n_u))]
+
+            plt.figure(figsize=(15,10))
+            for i in range(len(n_u)):
+                plt.plot(concentrations, n_u[i], label=' %2.0f C°'% x_data[0][i], color=isotherm_colors[i])
+            plt.ylabel('Fraction of unfolded protein')
+            plt.xlabel('Ligand concentration, nM')
+            pyplot.xscale('log')
+            plt.legend(loc=2, prop={'size': 10})
+            plt.title('Isotherm')
+            plt.show()
+
+class DataSaver:
+    """Handles saving of analysis results"""
+    
+    @staticmethod
+    def save_data(experiment_dict, data_name, directory_name, T_isotherm):
+        """Save analysis results to files"""
+        for k in range(len(data_name)):
+            name = data_name[k]
+            concentration_names = experiment_dict[name]['concentration_names']
+            concentrations = experiment_dict[name]['concentrations']
+            x_data = experiment_dict[name]['x_data']
+            y_data = experiment_dict[name]['y_data']
+            parameters = experiment_dict[name]['parameters']
+            n_u = experiment_dict[name]['n_u']
+            R_square = experiment_dict[name]['R^2']
+            
+            if k == 0:
+                df = pd.DataFrame(parameters["G"], index=concentrations, columns=[name])
+                dfT = pd.DataFrame(parameters["Tm"], index=concentrations, columns=[name])
+                dfR = pd.DataFrame(experiment_dict[name]['R^2'], index=concentrations, columns=[name])
             else:
-                print("error: name ", i, " is invalid")
+                df2 = pd.DataFrame(parameters["G"], index=concentrations, columns=[name])
+                df = pd.concat([df, df2], axis=1, sort=False)
 
-            concentrations.append(conc)
-            x = np.array(data[data.columns[0]])
-            y = np.array(data[i])
-            x_data.append(x)
-            y_data.append(y)
+                dfT2 = pd.DataFrame(parameters["Tm"], index=concentrations, columns=[name])
+                dfT = pd.concat([dfT, dfT2], axis=1, sort=False)
 
-        x_data = np.array(x_data)
-        y_data = np.array(y_data)
-        concentrations = np.array(concentrations)
-        curve_dict = {
-            "x_data": x_data,
-            "y_data": y_data,
-            "concentrations": concentrations,
-            "concentration_names": concentration_names,
-        }
-        experiment_dict[name] = curve_dict
-    return experiment_dict
+                dfR2 = pd.DataFrame(experiment_dict[name]['R^2'], index=concentrations, columns=[name])
+                dfR = pd.concat([dfR, dfR2], axis=1, sort=False)
 
-
-def curve_approximation(
-    experiment_dict,
-    approximation_function,
-    data_name,
-    params_start=None,
-    params_min=None,
-    params_max=None,
-):
-    """
-    The function 'curve_approximation' is made to find parameters that best
-    approximate the selected function to the experimental data.
-
-    For the work of the function, the next values must be passed into it:
-    the dictionary generated by 'data_read' function' – 'experiment_dict',
-    a function used for approximation – 'approximation_function',
-    the list of file names – 'data_name'.
-
-    Additionally, if you want to set starting values and boundaries for
-    parameter search manually, you can do it by giving the function the
-    lists 'params_start', 'params_min' and 'params_max'.
-
-    The result of the function work is a modification of dictionary
-    'experiment_dict'. The next values are added to each 'curve_dict':
-    * dictionary with the values of chosen parameters and also with the
-      value change of Gibbs free energy change 'G' and change of entropy
-      'S' – 'parameters',
-    * list of R square values calculated for approximation of each curve 'R^2',
-    * matrix containing fraction of unfolded protein for all temperatures
-      in the experiment 'n_u'
-    """
-
-    H_0 = 10000
-    Tm_0 = 45
-    a_0 = 0
-    b_0 = 0
-
-    if params_start is None:
-        flag_1 = True
-    if params_min is None:
-        flag_2 = True
-    if params_max is None:
-        flag_3 = True
-
-    for k in range(len(data_name)):
-        name = data_name[k]
-        concentrations = experiment_dict[name]["concentrations"]
-        x_data = experiment_dict[name]["x_data"]
-        y_data = experiment_dict[name]["y_data"]
-        n_u = np.zeros((len(T_isotherm), len(concentrations)))
-        print('File in process: ',name)
-
-        parameters_names = ["H", "Tm", "Fn", "Fu", "a", "b", "G", "S"]
-        parameters = dict()
-        for m in parameters_names:
-            parameters[m] = []
-
-        for i in range(len(x_data)):
-            F = y_data[i]
-            Fn_0 = min(F)
-            Fu_0 = max(F)
-
-            H_min, H_max = [1000, 800000]
-            Tm_min, Tm_max = [30, 75]
-            Fn_min, Fn_max = [0.8 * Fn_0, 1.1 * Fn_0]
-            Fu_min, Fu_max = [0.9 * Fu_0, 1.5 * Fu_0]
-            a_min, a_max = [-1, 1]
-            b_min, b_max = [-0.5, 0.5]
-
-            if flag_1:
-                params_start = [H_0, Tm_0, Fn_0, Fu_0, a_0, b_0]
-            if flag_2:
-                params_min = [H_min, Tm_min, Fn_min, Fu_min, a_min, b_min]
-            if flag_3:
-                params_max = [H_max, Tm_max, Fn_max, Fu_max, a_max, b_max]
-
-            param, addition = curve_fit(
-                approximation_function,
-                x_data[i],
-                y_data[i],
-                p0=params_start,
-                bounds=(params_min, params_max),
+            # Create DataFrame for n_u with proper dimensions
+            data_nu = pd.DataFrame(n_u.T, index=concentrations, columns=x_data[0])
+            data_nu.to_csv(
+                directory_name + "/" + data_name[k][:-4] + "_result_isothermal.csv"
             )
 
-            H, Tm, Fn, Fu, a, b = list(map(float, param))
-            S = H / (Tm + 273)
-            G = H - 298 * S
+        df.to_csv(directory_name + "/result_G.csv")
+        dfT.to_csv(directory_name + "/result_T.csv")
+        dfR.to_csv(directory_name+'/result_R^2.csv')
+        print("Data is saved")
 
-            param_list = [H, Tm, Fn, Fu, a, b, G, S]
-            prediction = approximation_function(x_data[i],H, Tm, Fn, Fu, a, b)
-            corr_matrix = np.corrcoef(y_data[i], prediction)
-            R_square_list.append(corr_matrix[0,1]**2)
+class MeltCurveAnalyzer:
+    """Main class for melt curve analysis"""
+    
+    def __init__(self, directory_name, T_isotherm=None):
+        self.directory_name = directory_name
+        self.data_name = None
+        self.experiment = None
+        self.T_isotherm = T_isotherm if T_isotherm is not None else np.arange(25, 95, 5)  # Default temperature range
 
-            for n in range(len(param_list)):
-                parameters[parameters_names[n]].append(param_list[n])
-
-            for j in range(len(x_data[i])):
-                T = x_data[i][j]
-                n_u[j][i] = (F[j]-Fn-a*(T-25))/(Fu-Fn+(b-a)*(T-25))
-
-        experiment_dict[name]["parameters"] = parameters
-        experiment_dict[name]["n_u"] = n_u
-        experiment_dict[name]['R^2'] = R_square_list
-
-    return experiment_dict
-
-
-def visualization(experiment_dict, data_name):
-    """
-    The function 'visualization' is made to visualize the result of
-    function 'curve_approximation' work.
-
-    For the work of the function, the next values must be passed into it:
-    * the dictionary generated by 'data_read' function' and modified by
-      'curve_approximation' function – 'experiment_dict',
-    * the list of file names – 'data_name'.
-
-    The result of the function work is a displaying a series of tables
-    and graphs for each file:
-    * the name of the processed file,
-    * table of chosen parameters and R square value for each curve,
-    * graph showing the experimental points of melting curve and their
-      approximation,
-    * graph showing Gibbs free energy change dependence on ligand
-      concentration,
-    * graph showing melting point 'Tm' dependence on ligand
-      concentration,
-    * graph showing the fraction of unfolded protein dependence on
-      ligand concentration for all temperatures from experiment - 'Isotherm'.
-    """
-
-    for k in range(len(data_name)):
-        name = data_name[k]
-        concentration_names = experiment_dict[name]["concentration_names"]
-        concentrations = experiment_dict[name]["concentrations"]
-        x_data = experiment_dict[name]["x_data"]
-        y_data = experiment_dict[name]["y_data"]
-        parameters = experiment_dict[name]["parameters"]
-        n_u = experiment_dict[name]["n_u"]
-        R_square = experiment_dict[name]['R^2']
-        print("File in visualization:", name)
-
-        parameters_frame = pd.DataFrame.from_dict(
-            parameters, orient="index", columns=concentration_names
+    def run_analysis(self):
+        """Run the complete analysis workflow"""
+        self.data_name = DataReader.search_data(self.directory_name)
+        self.experiment = DataReader.read_data(self.data_name, self.directory_name)
+        self.experiment = CurveApproximator.approximate_curves(
+            self.experiment, 
+            self.data_name,
+            self.T_isotherm
         )
-        parameters_frame.loc[len(parameters_frame.index )] = R_square
-        parameters_frame.rename(index={parameters_frame.index[-1]: 'R^2'}, inplace=True)    
-        display(parameters_frame)
+        Visualizer.visualize_results(self.experiment, self.data_name)
+        DataSaver.save_data(self.experiment, self.data_name, self.directory_name, self.T_isotherm)
 
-        colors_1 = [plt.cm.nipy_spectral(i/float(len(x_data)-1)) for i in range(len(x_data))]
+# Example usage
+if __name__ == "__main__":
+    directory_name = "Example for processing"
+    T_isotherm = np.arange(25, 95, 5)  # Temperature range from 25°C to 90°C in steps of 5°C
+    analyzer = MeltCurveAnalyzer(directory_name, T_isotherm)
+    analyzer.run_analysis()
 
-        plt.figure(figsize=(15, 10))
-        for i in range(len(x_data)):
-            plt.scatter(x_data[i], y_data[i], color=colors_1[i])
-            f = meltcurve_computation(
-                x_data[i],
-                *np.array(parameters_frame[concentration_names[i]][:6])
-            )
-            plt.plot(
-                x_data[i],
-                f,
-                label=concentration_names[i],
-                color="C" + str(i)
-            )
-            plt.xlabel("T,°C")
-            plt.ylabel("Flourescence CPM")
-
-        plt.legend(loc=2, prop={"size": 10})
-        plt.title("Approximation of melting curves")
-        plt.show()
-
-        plt.figure(figsize=(15, 10))
-        plt.scatter(concentrations, *np.array(parameters_frame.loc[["G"]]))
-        plt.ylabel("delta G")
-        plt.xlabel("Ligand concentration, nM")
-        pyplot.xscale("log")
-        plt.title("delta G dependence")
-        plt.show()
-
-        plt.figure(figsize=(15, 10))
-        plt.scatter(concentrations, *np.array(parameters_frame.loc[["Tm"]]))
-        plt.ylabel("Tm")
-        plt.xlabel("Ligand concentration, nM")
-        pyplot.xscale("log")
-        plt.title("Tm dependence")
-        plt.show()
-
-        colors_2 = [plt.cm.nipy_spectral(i/float(len(n_u)-1)) for i in range(len(n_u))]
-
-        plt.figure(figsize =(15,10))
-        for i in range(len(n_u)):
-            plt.plot(concentrations, n_u[i],label = ' %2.0f C°'% x_data[0][i], color = colors_2[i])
-        plt.ylabel('Fraction of unfolded protein')
-        plt.xlabel( 'Ligand concentration, nM')
-        pyplot.xscale('log')
-        plt.legend(loc = 2, prop={'size': 10})
-        plt.title('Isotherm')
-        plt.show()
-
-
-def data_save(experiment_dict, data_name, directory_name):
-    """
-    The function 'data_save' is made to save data gained by approximation.
-
-    For the work of the function, the next values must be passed into it:
-    the dictionary generated by 'data_read' function'
-    and modified by 'curve_approximation' function – 'experiment_dict',
-    the list of file names – 'data_name',
-    the pass to the directory – 'directory_name'.
-
-    The result of the function work is a generation of next csv files in
-    the directory 'directory_name':
-    * the file with the table containing Gibbs free energy change
-      dependence on ligand concentration for each file – 'result_G.csv',
-    * the file with the table containing melting point 'Tm' dependence
-      on ligand concentration for each file – 'result_G.csv',
-    * the files containing matrix for the fraction of unfolded protein
-      dependence on ligand concentration for temperatures from 'T_melt' for
-      each file from analysis – name of file + '_result_isothermal.csv',
-    * the file with the table containing R square values 'R^2' dependence
-      on ligand concentration for each file – 'result_R^2.csv'. 
-    """
-
-    for k in range(len(data_name)):
-        name = data_name[k]
-        concentration_names = experiment_dict[name]['concentration_names']
-        concentrations = experiment_dict[name]['concentrations']
-        x_data = experiment_dict[name]['x_data']
-        y_data = experiment_dict[name]['y_data']
-        parameters = experiment_dict[name]['parameters']
-        n_u = experiment_dict[name]['n_u']
-        R_square = experiment_dict[name]['R^2']
-        
-        if k == 0:
-            df = pd.DataFrame(parameters["G"], concentrations, [name])
-            dfT = pd.DataFrame(parameters["Tm"], concentrations, [name])
-            dfR = pd.DataFrame(experiment_dict[name]['R^2'], concentrations,[name])
-        else:
-            df2 = pd.DataFrame(parameters["G"], concentrations, [name])
-            df = pd.concat([df, df2], axis=1, sort=False)
-
-            dfT2 = pd.DataFrame(parameters["Tm"], concentrations, [name])
-            dfT = pd.concat([dfT, dfT2], axis=1, sort=False)
-
-            dfR2 = pd.DataFrame(experiment_dict[name]['R^2'], concentrations,[name])
-            dfR = pd.concat([dfR,dfR2], axis = 1, sort=False )
-
-        data_nu = pd.DataFrame(n_u.T, concentrations, T_isotherm)
-        data_nu.to_csv(
-            directory_name + "/" + data_name[k][:-4] + "_result_isothermal.csv"
-        )
-
-    df.to_csv(directory_name + "/result_G.csv")
-    dfT.to_csv(directory_name + "/result_T.csv")
-    dfR.to_csv(directory_name+'/result_R^2.csv')
-    print("Data is saved")
-
-"""
-The following sequence of commands implements the full cycle of data
-processing, namely, searching and saving files for analysis – 'data_search',
-saving data from files – 'data_read', approximating data from the file
-according to the selected model – 'curve_approximation', visualizing the
-selected parameters and the values calculated from them – 'visualization',
-saving the calculated values – 'data_save'.
-
-In the variable 'directory_name' you should specify the full path to the
-directory where the files to be processed are located.
-
-To get the best result, we recommend to first try different initial values, as
-well as constraints for the parameters in the function 'curve_approximation'
-and visually evaluate the result obtained with the help of the function
-'visualization', and only when the best approximation to the experimental data
-is achieved, proceed to converting and saving the data with the help of the
-function 'data_save'.
-"""
-
-directory_name = "Example for processing"
-data_name = data_search(directory_name)
-experiment = data_read(data_name, directory_name)
-experiment = curve_approximation(experiment, meltcurve_computation, data_name)
-visualization(experiment, data_name)
-data_save(experiment, data_name, directory_name)
